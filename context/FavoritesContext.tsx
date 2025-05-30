@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Pokemon = {
   name: string;
@@ -15,15 +16,45 @@ type FavoritesContextType = {
 
 const FavoritesContext = createContext<FavoritesContextType | undefined>(undefined);
 
+const STORAGE_KEY = '@pokemon_favorites';
+
 export function FavoritesProvider({ children }: { children: ReactNode }) {
   const [favorites, setFavorites] = useState<Pokemon[]>([]);
 
+  // Carregar favoritos do AsyncStorage quando o app iniciar
+  useEffect(() => {
+    loadFavorites();
+  }, []);
+
+  const loadFavorites = async () => {
+    try {
+      const storedFavorites = await AsyncStorage.getItem(STORAGE_KEY);
+      if (storedFavorites) {
+        setFavorites(JSON.parse(storedFavorites));
+      }
+    } catch (error) {
+      console.error('Erro ao carregar favoritos:', error);
+    }
+  };
+
+  const saveFavorites = async (newFavorites: Pokemon[]) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newFavorites));
+    } catch (error) {
+      console.error('Erro ao salvar favoritos:', error);
+    }
+  };
+
   const addFavorite = (pokemon: Pokemon) => {
-    setFavorites(prev => [...prev, pokemon]);
+    const newFavorites = [...favorites, pokemon];
+    setFavorites(newFavorites);
+    saveFavorites(newFavorites);
   };
 
   const removeFavorite = (pokemonName: string) => {
-    setFavorites(prev => prev.filter(p => p.name !== pokemonName));
+    const newFavorites = favorites.filter(p => p.name !== pokemonName);
+    setFavorites(newFavorites);
+    saveFavorites(newFavorites);
   };
 
   const isFavorite = (pokemonName: string) => {
