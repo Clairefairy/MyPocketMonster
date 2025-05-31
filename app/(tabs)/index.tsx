@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
-import { Platform, StyleSheet, TextInput, ScrollView, ActivityIndicator, Pressable } from 'react-native';
-import { useState } from 'react';
+import { Platform, StyleSheet, TextInput, ScrollView, ActivityIndicator, Pressable, View } from 'react-native';
+import { useState, useEffect } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/ThemedText';
@@ -34,6 +34,19 @@ interface PokemonData {
   }>;
   height: number;
   weight: number;
+  forms: Array<{
+    name: string;
+    url: string;
+  }>;
+}
+
+interface PokemonSuggestion {
+  name: string;
+  url: string;
+  forms?: Array<{
+    name: string;
+    url: string;
+  }>;
 }
 
 export default function HomeScreen() {
@@ -41,26 +54,89 @@ export default function HomeScreen() {
   const [pokemon, setPokemon] = useState<PokemonData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [suggestions, setSuggestions] = useState<PokemonSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const { addFavorite, removeFavorite, isFavorite } = useFavorites();
+  const [selectedForm, setSelectedForm] = useState<string | null>(null);
 
-  const searchPokemon = async () => {
-    if (!searchText.trim()) return;
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (searchText.length < 2) {
+        setSuggestions([]);
+        return;
+      }
+
+      try {
+        const response = await fetch('https://pokeapi.co/api/v2/pokemon?limit=1000');
+        const data = await response.json();
+        
+        // Buscar detalhes de espécie para cada Pokémon
+        const pokemonWithForms = await Promise.all(
+          data.results
+            .filter((pokemon: PokemonSuggestion) =>
+              pokemon.name.toLowerCase().includes(searchText.toLowerCase())
+            )
+            .slice(0, 5)
+            .map(async (pokemon: PokemonSuggestion) => {
+              try {
+                const speciesResponse = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${pokemon.name}`);
+                const speciesData = await speciesResponse.json();
+                
+                if (speciesData.varieties.length > 1) {
+                  return {
+                    ...pokemon,
+                    forms: speciesData.varieties.map((variety: any) => ({
+                      name: variety.pokemon.name,
+                      url: variety.pokemon.url
+                    }))
+                  };
+                }
+                return pokemon;
+              } catch (error) {
+                console.error('Erro ao buscar formas:', error);
+                return pokemon;
+              }
+            })
+        );
+
+        setSuggestions(pokemonWithForms);
+      } catch (error) {
+        console.error('Erro ao buscar sugestões:', error);
+      }
+    };
+
+    const timeoutId = setTimeout(fetchSuggestions, 300);
+    return () => clearTimeout(timeoutId);
+  }, [searchText]);
+
+  const searchPokemon = async (pokemonName: string, formUrl?: string) => {
+    if (!pokemonName.trim()) return;
     
     setLoading(true);
     setError('');
     
     try {
-      const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${searchText.toLowerCase()}`);
+      const url = formUrl || `https://pokeapi.co/api/v2/pokemon/${pokemonName.toLowerCase()}`;
+      const response = await fetch(url);
       if (!response.ok) throw new Error('Pokémon não encontrado');
       
       const data = await response.json();
       setPokemon(data);
+      setSelectedForm(formUrl ? pokemonName : null);
+      if (formUrl) {
+        setShowSuggestions(false);
+      }
     } catch (err) {
       setError('Erro ao buscar Pokémon. Tente novamente.');
       setPokemon(null);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSuggestionPress = (pokemonName: string, formUrl?: string) => {
+    setSearchText(pokemonName);
+    searchPokemon(pokemonName, formUrl);
   };
 
   const toggleFavorite = () => {
@@ -79,6 +155,10 @@ export default function HomeScreen() {
     }
   };
 
+  const handlePressOutside = () => {
+    setShowSuggestions(false);
+  };
+
   return (
     <ScrollView style={styles.container}>
       <ThemedView style={styles.titleContainer}>
@@ -91,11 +171,50 @@ export default function HomeScreen() {
           placeholder="Digite o nome do Pokémon"
           placeholderTextColor="#95a5a6"
           value={searchText}
-          onChangeText={setSearchText}
-          onSubmitEditing={searchPokemon}
+          onChangeText={(text) => {
+            setSearchText(text);
+            setShowSuggestions(true);
+          }}
+          onSubmitEditing={() => searchPokemon(searchText)}
           returnKeyType="search"
         />
+        {showSuggestions && suggestions.length > 0 && (
+          <ThemedView style={styles.suggestionsContainer}>
+            {suggestions.map((suggestion) => (
+              <View key={suggestion.name}>
+                <Pressable
+                  style={styles.suggestionItem}
+                  onPress={() => handleSuggestionPress(suggestion.name)}
+                >
+                  <ThemedText style={styles.suggestionText}>
+                    {suggestion.name.charAt(0).toUpperCase() + suggestion.name.slice(1)}
+                  </ThemedText>
+                </Pressable>
+                {suggestion.forms && suggestion.forms.map((form) => (
+                  <Pressable
+                    key={form.name}
+                    style={[styles.suggestionItem, styles.formSuggestionItem]}
+                    onPress={() => handleSuggestionPress(form.name, form.url)}
+                  >
+                    <ThemedText style={styles.formSuggestionText}>
+                      {form.name.split('-').map(word => 
+                        word.charAt(0).toUpperCase() + word.slice(1)
+                      ).join(' ')}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+          </ThemedView>
+        )}
       </ThemedView>
+
+      {showSuggestions && (
+        <Pressable
+          style={styles.overlay}
+          onPress={handlePressOutside}
+        />
+      )}
 
       {loading && (
         <ThemedView style={styles.loadingContainer}>
@@ -250,5 +369,46 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: '#f8f9fa',
     borderRadius: 8,
+  },
+  suggestionsContainer: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginTop: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1000,
+  },
+  suggestionItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  suggestionText: {
+    fontSize: 16,
+    color: '#2c3e50',
+  },
+  formSuggestionItem: {
+    paddingLeft: 24,
+    backgroundColor: '#f8f9fa',
+  },
+  formSuggestionText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'transparent',
+    zIndex: 999,
   },
 });
