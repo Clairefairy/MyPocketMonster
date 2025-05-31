@@ -43,10 +43,6 @@ interface PokemonData {
 interface PokemonSuggestion {
   name: string;
   url: string;
-  forms?: Array<{
-    name: string;
-    url: string;
-  }>;
 }
 
 export default function HomeScreen() {
@@ -58,6 +54,7 @@ export default function HomeScreen() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const { addFavorite, removeFavorite, isFavorite } = useFavorites();
   const [selectedForm, setSelectedForm] = useState<string | null>(null);
+  const [availableForms, setAvailableForms] = useState<Array<{name: string, url: string}>>([]);
 
   useEffect(() => {
     const fetchSuggestions = async () => {
@@ -70,36 +67,14 @@ export default function HomeScreen() {
         const response = await fetch('https://pokeapi.co/api/v2/pokemon?limit=1000');
         const data = await response.json();
         
-        // Buscar detalhes de espécie para cada Pokémon
-        const pokemonWithForms = await Promise.all(
-          data.results
-            .filter((pokemon: PokemonSuggestion) =>
-              pokemon.name.toLowerCase().includes(searchText.toLowerCase())
-            )
-            .slice(0, 5)
-            .map(async (pokemon: PokemonSuggestion) => {
-              try {
-                const speciesResponse = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${pokemon.name}`);
-                const speciesData = await speciesResponse.json();
-                
-                if (speciesData.varieties.length > 1) {
-                  return {
-                    ...pokemon,
-                    forms: speciesData.varieties.map((variety: any) => ({
-                      name: variety.pokemon.name,
-                      url: variety.pokemon.url
-                    }))
-                  };
-                }
-                return pokemon;
-              } catch (error) {
-                console.error('Erro ao buscar formas:', error);
-                return pokemon;
-              }
-            })
-        );
+        const filteredSuggestions = data.results
+          .filter((pokemon: PokemonSuggestion) =>
+            pokemon.name.toLowerCase().includes(searchText.toLowerCase())
+          )
+          .slice(0, 5);
 
-        setSuggestions(pokemonWithForms);
+        setSuggestions(filteredSuggestions);
+        setShowSuggestions(true);
       } catch (error) {
         console.error('Erro ao buscar sugestões:', error);
       }
@@ -108,6 +83,28 @@ export default function HomeScreen() {
     const timeoutId = setTimeout(fetchSuggestions, 300);
     return () => clearTimeout(timeoutId);
   }, [searchText]);
+
+  const fetchPokemonForms = async (pokemonName: string) => {
+    try {
+      const speciesResponse = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${pokemonName}`);
+      const speciesData = await speciesResponse.json();
+      
+      if (speciesData.varieties.length > 1) {
+        const forms = speciesData.varieties
+          .filter((variety: any) => variety.pokemon.name !== pokemonName)
+          .map((variety: any) => ({
+            name: variety.pokemon.name,
+            url: variety.pokemon.url
+          }));
+        setAvailableForms(forms);
+      } else {
+        setAvailableForms([]);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar formas:', error);
+      setAvailableForms([]);
+    }
+  };
 
   const searchPokemon = async (pokemonName: string, formUrl?: string) => {
     if (!pokemonName.trim()) return;
@@ -123,20 +120,28 @@ export default function HomeScreen() {
       const data = await response.json();
       setPokemon(data);
       setSelectedForm(formUrl ? pokemonName : null);
-      if (formUrl) {
-        setShowSuggestions(false);
+      
+      // Buscar formas disponíveis
+      if (!formUrl) {
+        await fetchPokemonForms(pokemonName);
       }
     } catch (err) {
       setError('Erro ao buscar Pokémon. Tente novamente.');
       setPokemon(null);
+      setAvailableForms([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSuggestionPress = (pokemonName: string, formUrl?: string) => {
+  const handleSuggestionPress = (pokemonName: string) => {
     setSearchText(pokemonName);
-    searchPokemon(pokemonName, formUrl);
+    searchPokemon(pokemonName);
+  };
+
+  const handleFormPress = async (formName: string, formUrl: string) => {
+    setSelectedForm(formName);
+    await searchPokemon(formName, formUrl);
   };
 
   const toggleFavorite = () => {
@@ -173,37 +178,30 @@ export default function HomeScreen() {
           value={searchText}
           onChangeText={(text) => {
             setSearchText(text);
-            setShowSuggestions(true);
+            if (text.length >= 2) {
+              setShowSuggestions(true);
+            } else {
+              setShowSuggestions(false);
+            }
           }}
-          onSubmitEditing={() => searchPokemon(searchText)}
+          onSubmitEditing={() => {
+            searchPokemon(searchText);
+            setShowSuggestions(false);
+          }}
           returnKeyType="search"
         />
         {showSuggestions && suggestions.length > 0 && (
           <ThemedView style={styles.suggestionsContainer}>
             {suggestions.map((suggestion) => (
-              <View key={suggestion.name}>
-                <Pressable
-                  style={styles.suggestionItem}
-                  onPress={() => handleSuggestionPress(suggestion.name)}
-                >
-                  <ThemedText style={styles.suggestionText}>
-                    {suggestion.name.charAt(0).toUpperCase() + suggestion.name.slice(1)}
-                  </ThemedText>
-                </Pressable>
-                {suggestion.forms && suggestion.forms.map((form) => (
-                  <Pressable
-                    key={form.name}
-                    style={[styles.suggestionItem, styles.formSuggestionItem]}
-                    onPress={() => handleSuggestionPress(form.name, form.url)}
-                  >
-                    <ThemedText style={styles.formSuggestionText}>
-                      {form.name.split('-').map(word => 
-                        word.charAt(0).toUpperCase() + word.slice(1)
-                      ).join(' ')}
-                    </ThemedText>
-                  </Pressable>
-                ))}
-              </View>
+              <Pressable
+                key={suggestion.name}
+                style={styles.suggestionItem}
+                onPress={() => handleSuggestionPress(suggestion.name)}
+              >
+                <ThemedText style={styles.suggestionText}>
+                  {suggestion.name.charAt(0).toUpperCase() + suggestion.name.slice(1)}
+                </ThemedText>
+              </Pressable>
             ))}
           </ThemedView>
         )}
@@ -245,6 +243,33 @@ export default function HomeScreen() {
           <ThemedText type="subtitle" style={styles.pokemonName}>
             {pokemon.name.charAt(0).toUpperCase() + pokemon.name.slice(1)}
           </ThemedText>
+
+          {availableForms.length > 0 && (
+            <ThemedView style={styles.formsContainer}>
+              <ThemedText type="defaultSemiBold" style={{ color: '#4a90e2' }}>Formas Disponíveis:</ThemedText>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.formsScroll}>
+                {availableForms.map((form) => (
+                  <Pressable
+                    key={form.name}
+                    style={[
+                      styles.formButton,
+                      selectedForm === form.name && styles.selectedFormButton
+                    ]}
+                    onPress={() => handleFormPress(form.name, form.url)}
+                  >
+                    <ThemedText style={[
+                      styles.formButtonText,
+                      selectedForm === form.name && styles.selectedFormButtonText
+                    ]}>
+                      {form.name.split('-').map(word => 
+                        word.charAt(0).toUpperCase() + word.slice(1)
+                      ).join(' ')}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </ThemedView>
+          )}
 
           <ThemedView style={styles.infoContainer}>
             <ThemedText type="defaultSemiBold" style={{ color: '#4a90e2' }}>Tipos:</ThemedText>
@@ -394,13 +419,31 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#2c3e50',
   },
-  formSuggestionItem: {
-    paddingLeft: 24,
-    backgroundColor: '#f8f9fa',
+  formsContainer: {
+    width: '100%',
+    marginBottom: 20,
   },
-  formSuggestionText: {
+  formsScroll: {
+    marginTop: 8,
+  },
+  formButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#f0f8ff',
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#4a90e2',
+  },
+  selectedFormButton: {
+    backgroundColor: '#4a90e2',
+  },
+  formButtonText: {
+    color: '#4a90e2',
     fontSize: 14,
-    color: '#666',
+  },
+  selectedFormButtonText: {
+    color: '#ffffff',
   },
   overlay: {
     position: 'absolute',
